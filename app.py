@@ -2,110 +2,133 @@ import streamlit as st
 import PyPDF2
 import docx
 import google.generativeai as genai
+import time
 
-# إعداد واجهة الصفحة
-st.set_page_config(page_title="المُعلم الذكي التفاعلي", page_icon="🧠", layout="centered")
-st.title("🧠 المُعلم الذكي التفاعلي")
-st.markdown("ارفع ملفك، وسأقوم باختبارك سؤالاً بسؤال. أجبني وسأصحح لك وأشرح لك التفاصيل!")
+# --- إعدادات الصفحة والتصميم ---
+st.set_page_config(page_title="المُعلم العملاق 4.0", page_icon="🎓", layout="wide")
 
-# إعداد متغيرات الجلسة (للاحتفاظ بالذاكرة والمحادثة)
+# تخصيص التصميم عبر CSS
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; border-radius: 20px; height: 3em; background-color: #4A90E2; color: white; }
+    .report-card { padding: 20px; border-radius: 15px; background-color: #ffffff; border: 1px solid #e0e0e0; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- إدارة حالة الجلسة (Session State) ---
 if "chat_session" not in st.session_state:
     st.session_state.chat_session = None
-if "file_processed" not in st.session_state:
-    st.session_state.file_processed = False
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "score" not in st.session_state:
+    st.session_state.score = {"correct": 0, "total": 0}
+if "difficulty" not in st.session_state:
+    st.session_state.difficulty = "متوسط"
+if "student_level" not in st.session_state:
+    st.session_state.student_level = "مبتدئ"
 
-# إدخال مفتاح API
-api_key = st.text_input("🔑 أدخل مفتاح Gemini API الخاص بك:", type="password")
+# --- الواجهة الجانبية (Sidebar) ---
+with st.sidebar:
+    st.title("⚙️ إعدادات المعلم")
+    api_key = st.text_input("🔑 مفتاح Gemini API:", type="password")
+    
+    st.divider()
+    st.subheader("📊 لوحة الأداء")
+    col1, col2 = st.columns(2)
+    col1.metric("الأسئلة", st.session_state.score["total"])
+    col2.metric("الإجابات الصحيحة", st.session_state.score["correct"])
+    
+    st.divider()
+    st.session_state.difficulty = st.select_slider(
+        "🎯 مستوى صعوبة الأسئلة:",
+        options=["سهل", "متوسط", "تحدي", "عبقري"]
+    )
+    
+    if st.button("🗑️ مسح الذاكرة والبدء من جديد"):
+        for key in st.session_state.keys():
+            del st.session_state[key]
+        st.rerun()
 
-if api_key:
+# --- دالة استخراج النص ---
+def extract_text(file):
+    text = ""
+    if file.name.endswith('.txt'):
+        text = file.read().decode("utf-8")
+    elif file.name.endswith('.pdf'):
+        pdf_reader = PyPDF2.PdfReader(file)
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+    elif file.name.endswith('.docx'):
+        doc = docx.Document(file)
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+    return text
+
+# --- المنطق الأساسي ---
+st.title("🎓 المُعلم الذكي التفاعلي (النسخة الاحترافية)")
+
+if not api_key:
+    st.warning("👈 من فضلك، أدخل مفتاح API في اللوحة الجانبية للبدء.")
+else:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # استخدام موديل Pro للعمق التحليلي أو Flash للسرعة
+    model = genai.GenerativeModel('gemini-1.5-pro') 
 
-    # الخطوة 1: رفع الملف ومعالجته (تظهر فقط إذا لم يتم معالجة ملف بعد)
-    if not st.session_state.file_processed:
-        uploaded_file = st.file_uploader("📂 ارفع الملف (TXT, PDF, DOCX)...", type=['txt', 'pdf', 'docx'])
-
-        if uploaded_file is not None:
-            text = ""
-            with st.spinner('جاري قراءة الملف...'):
-                try:
-                    if uploaded_file.name.endswith('.txt'):
-                        text = uploaded_file.read().decode("utf-8")
-                    elif uploaded_file.name.endswith('.pdf'):
-                        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-                        for page in pdf_reader.pages:
-                            extracted = page.extract_text()
-                            if extracted: text += extracted + "\n"
-                    elif uploaded_file.name.endswith('.docx'):
-                        doc = docx.Document(uploaded_file)
-                        for para in doc.paragraphs:
-                            text += para.text + "\n"
-
-                    if text.strip():
-                        # إنشاء التعليمات المعقدة للذكاء الاصطناعي
-                        system_instruction = f"""
-                        أنت معلم خبير وصارم ولكنك مشجع. هذا هو النص الدراسي:
-                        {text[:20000]}
-                        
-                        مهمتك:
-                        1. اطرح سؤالاً واحداً فقط لاختبار فهمي للنص.
-                        2. انتظر إجابتي.
-                        3. بعد أن أجيب، قيّم إجابتي (صحيحة، خاطئة، غير مكتملة).
-                        4. اشرح لي الإجابة الصحيحة أو لماذا أخطأت بناءً على النص.
-                        5. ثم اطرح السؤال التالي مباشرة.
-                        لا تطرح أكثر من سؤال في نفس الرسالة أبداً.
-                        """
-                        
-                        # بدء جلسة محادثة مع ذاكرة
-                        st.session_state.chat_session = model.start_chat(history=[
-                            {"role": "user", "parts": [system_instruction]}
-                        ])
-                        
-                        # طلب السؤال الأول من الـ AI
-                        first_response = st.session_state.chat_session.send_message("مرحباً أيها المعلم، أنا جاهز. اطرح السؤال الأول.")
-                        
-                        # حفظ الرسالة الأولى في الذاكرة لعرضها
-                        st.session_state.messages = [{"role": "assistant", "content": first_response.text}]
-                        st.session_state.file_processed = True
-                        st.rerun() # تحديث الصفحة لإظهار واجهة المحادثة
-                        
-                except Exception as e:
-                    st.error(f"❌ حدث خطأ: {e}")
-
-    # الخطوة 2: واجهة المحادثة التفاعلية (تظهر بعد قراءة الملف)
-    if st.session_state.file_processed:
-        st.success("✅ الملف في ذاكرتي الآن. دعنا نبدأ الاختبار!")
+    if st.session_state.chat_session is None:
+        uploaded_file = st.file_uploader("📂 ارفع منهجك الدراسي (PDF, DOCX, TXT)", type=['pdf', 'docx', 'txt'])
         
-        # عرض سجل المحادثة
+        if uploaded_file:
+            with st.spinner('🧠 يقوم المعلم الآن بقراءة الكتاب وتحليله بدقة...'):
+                raw_text = extract_text(uploaded_file)
+                
+                # بناء البرومبت "العميق"
+                system_instruction = f"""
+                أنت "المعلم الأكاديمي المتقدم". هذا هو المحتوى الذي ستدرسه:
+                {raw_text[:30000]} 
+
+                قواعد التدريس الخاصة بك:
+                1. الشخصية: معلم محفز، دقيق جداً، يستخدم أمثلة من الواقع.
+                2. المنهجية: استخدم "تصنيف بلوم". ابدأ بأسئلة الفهم ثم انتقل للتحليل والنقد بناءً على مستوى الصعوبة: {st.session_state.difficulty}.
+                3. التقييم: عندما يجيب المستخدم، حلل إجابته (هل هي دقيقة؟ ناقصة؟ خاطئة؟).
+                4. التغذية الراجعة: لا تقل "صح" أو "خطأ" فقط. اشرح "لماذا" واستخرج فقرات من النص تدعم شرحك.
+                5. التفاعل: اطرح سؤالاً واحداً فقط في كل مرة.
+                6. التنسيق: استخدم Bold للجمل المهمة، ورموز تعبيرية لتسهيل القراءة.
+
+                ابدأ الآن بالترحيب بالطالب وطرح أول سؤال بناءً على مستوى الصعوبة المحدد.
+                """
+                
+                st.session_state.chat_session = model.start_chat(history=[])
+                response = st.session_state.chat_session.send_message(system_instruction)
+                
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+                st.rerun()
+
+    else:
+        # عرض المحادثة
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
-        
-        # مربع إدخال إجابة المستخدم
-        user_answer = st.chat_input("اكتب إجابتك هنا...")
-        
-        if user_answer:
-            # عرض إجابة المستخدم
-            st.session_state.messages.append({"role": "user", "content": user_answer})
+
+        # إدخال المستخدم
+        if prompt := st.chat_input("أجب على السؤال هنا..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
-                st.markdown(user_answer)
-            
-            # إرسال الإجابة للذكاء الاصطناعي للحصول على التقييم والسؤال التالي
+                st.markdown(prompt)
+
             with st.chat_message("assistant"):
-                with st.spinner("جاري تقييم إجابتك..."):
-                    response = st.session_state.chat_session.send_message(user_answer)
+                with st.spinner("🤔 أفكر في إجابتك وأقارنها بالمصدر..."):
+                    # إرسال مستوى الصعوبة الحالي مع كل إجابة لضمان التكيف
+                    context_query = f"إجابتي هي: {prompt}. قيمها بدقة بناءً على النص، ثم اطرح السؤال التالي بمستوى صعوبة {st.session_state.difficulty}."
+                    response = st.session_state.chat_session.send_message(context_query)
+                    
+                    # محاكاة بسيطة لتتبع النقاط (يمكن جعلها أعقد عبر تحليل الرد)
+                    st.session_state.score["total"] += 1
+                    if "صحيح" in response.text or "أحسنت" in response.text:
+                        st.session_state.score["correct"] += 1
+                        
                     st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
             
-            # حفظ رد الـ AI في الذاكرة
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-            
-        # زر لإعادة تعيين التطبيق ورفع ملف جديد
-        if st.button("🔄 إنهاء الاختبار ورفع ملف جديد"):
-            st.session_state.file_processed = False
-            st.session_state.chat_session = None
-            st.session_state.messages = []
-            st.rerun()
-else:
-    st.info("👈 يرجى إدخال مفتاح API للبدء.")
+            # تحديث الواجهة الجانبية فورياً
+            st.sidebar.empty() 
