@@ -3,122 +3,91 @@ import PyPDF2
 import docx
 import google.generativeai as genai
 
-# --- إعدادات الصفحة الاحترافية ---
-st.set_page_config(
-    page_title="المُعلم الذكي PRO",
-    page_icon="🎓",
-    layout="wide"
-)
+# --- إعدادات الصفحة ---
+st.set_page_config(page_title="المُعلم الذكي PRO", page_icon="🎓", layout="wide")
 
-# --- تنسيق الواجهة (CSS) لجعلها أجمل ---
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #4CAF50; color: white; }
-    .stTextInput>div>div>input { border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- كود التصحيح الذاتي للموديل ---
+def get_working_model(api_key):
+    genai.configure(api_key=api_key)
+    # قائمة بالموديلات المرتبة من الأحدث للأضمن
+    models_to_try = [
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro',
+        'models/gemini-1.5-flash',
+        'gemini-pro'
+    ]
+    for model_name in models_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            # تجربة وهمية للتأكد أن الموديل متاح
+            model.generate_content("test", generation_config={"max_output_tokens": 1})
+            return model
+        except Exception:
+            continue
+    return None
 
-# --- إعداد متغيرات الجلسة ---
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "file_text" not in st.session_state:
-    st.session_state.file_text = ""
+# --- تحضير الجلسة ---
+if "messages" not in st.session_state: st.session_state.messages = []
+if "chat_session" not in st.session_state: st.session_state.chat_session = None
+if "file_text" not in st.session_state: st.session_state.file_text = ""
 
-# --- القائمة الجانبية (Sidebar) للإعدادات ---
+# --- القائمة الجانبية ---
 with st.sidebar:
-    st.title("⚙️ إعدادات المعلم")
+    st.title("⚙️ الإعدادات")
     api_key = st.text_input("🔑 مفتاح Gemini API:", type="password")
-    
     st.divider()
-    
-    teacher_style = st.selectbox(
-        "🧠 اختر شخصية المعلم:",
-        ["المعلم الصارم (أسئلة صعبة)", "المعلم المشجع (شرح مبسط)", "وضع المراجعة السريعة"]
-    )
-    
-    learning_mode = st.radio(
-        "🎯 وضع التعلم:",
-        ["سؤال وجواب (اختبار)", "شرح ومناقشة", "تلخيص شامل"]
-    )
-    
+    teacher_style = st.selectbox("🧠 شخصية المعلم:", ["المعلم الصارم", "المعلم المشجع", "وضع المراجعة"])
     if st.button("🗑️ مسح المحادثة"):
         st.session_state.messages = []
         st.session_state.chat_session = None
         st.rerun()
 
-# --- واجهة التطبيق الرئيسية ---
-st.title("🎓 المُعلم الذكي التفاعلي (النسخة المطورة)")
-st.info("ارفع ملفك الدراسي، وسأقوم بتحليله واختبارك بناءً على الوضع الذي اخترته.")
+# --- الواجهة الرئيسية ---
+st.title("🎓 المُعلم الذكي (النسخة المستقرة)")
 
 if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # محاولة تشغيل الموديل بنظام "التصحيح الذاتي"
+    model = get_working_model(api_key)
+    
+    if model:
+        uploaded_file = st.file_uploader("📂 ارفع ملفك الدراسي:", type=['pdf', 'docx', 'txt'])
 
-    # --- رفع الملف ---
-    uploaded_file = st.file_uploader("📂 ارفع ملف (PDF, DOCX, TXT):", type=['pdf', 'docx', 'txt'])
+        if uploaded_file and not st.session_state.file_text:
+            with st.spinner('جاري التحليل...'):
+                text = ""
+                if uploaded_file.name.endswith('.pdf'):
+                    reader = PyPDF2.PdfReader(uploaded_file)
+                    for page in reader.pages: text += page.extract_text() + "\n"
+                elif uploaded_file.name.endswith('.docx'):
+                    doc = docx.Document(uploaded_file)
+                    for p in doc.paragraphs: text += p.text + "\n"
+                else:
+                    text = uploaded_file.read().decode("utf-8")
+                
+                st.session_state.file_text = text
+                prompt_init = f"أنت {teacher_style}. محتوى الملف: {text[:20000]}. ابدأ باختباري بسؤال واحد."
+                st.session_state.chat_session = model.start_chat(history=[])
+                response = st.session_state.chat_session.send_message(prompt_init)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
 
-    if uploaded_file and not st.session_state.file_text:
-        with st.spinner('جاري تحليل المحتوى بعمق...'):
-            text = ""
-            if uploaded_file.name.endswith('.pdf'):
-                reader = PyPDF2.PdfReader(uploaded_file)
-                for page in reader.pages: text += page.extract_text() + "\n"
-            elif uploaded_file.name.endswith('.docx'):
-                doc = docx.Document(uploaded_file)
-                for p in doc.paragraphs: text += p.text + "\n"
-            else:
-                text = uploaded_file.read().decode("utf-8")
-            
-            st.session_state.file_text = text
-            
-            # تعليمات الذكاء الاصطناعي المطورة
-            prompt_instruction = f"""
-            أنت الآن تؤدي دور: {teacher_style}.
-            وضع التعلم الحالي هو: {learning_mode}.
-            محتوى الكتاب أو النص هو:
-            {text[:25000]}
-            
-            قواعدك:
-            1. إذا كان الوضع 'سؤال وجواب'، اطرح سؤالاً ذكياً واحداً وانتظر الإجابة.
-            2. إذا كان الوضع 'شرح'، فسر المفاهيم الصعبة بأسلوب {teacher_style}.
-            3. دائماً صحح الأخطاء بدقة واذكر الصفحة أو السياق إذا أمكن.
-            4. استخدم الرموز التعبيرية لجعل الحوار تفاعلياً.
-            """
-            
-            st.session_state.chat_session = model.start_chat(history=[
-                {"role": "user", "parts": [prompt_instruction]}
-            ])
-            
-            # البداية
-            initial_msg = "مرحباً! لقد قرأت الملف بالكامل. كيف تحب أن نبدأ اليوم؟"
-            st.session_state.messages.append({"role": "assistant", "content": initial_msg})
+        # عرض الرسائل
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-    # --- عرض المحادثة ---
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # --- إدخال المستخدم ---
-    if prompt := st.chat_input("أجب هنا أو اسأل عن شيء في الملف..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            if st.session_state.chat_session:
+        # إدخال المستخدم
+        if prompt := st.chat_input("اسأل أو أجب هنا..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"): st.markdown(prompt)
+            
+            try:
                 response = st.session_state.chat_session.send_message(prompt)
-                full_response = response.text
-                st.markdown(full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-            else:
-                st.warning("يرجى رفع ملف أولاً للبدء.")
-
+                with st.chat_message("assistant"):
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+            except Exception as e:
+                st.error(f"حدث خطأ في الاتصال: {e}")
+    else:
+        st.error("❌ عذراً، مفتاح API الخاص بك لا يدعم الموديلات الحالية أو هناك مشكلة في الاتصال بجوجل.")
 else:
-    st.warning("⚠️ من فضلك أدخل مفتاح API في القائمة الجانبية للبدء.")
-
-# --- تذييل الصفحة ---
-st.divider()
-st.caption("تم التطوير بواسطة جيفارا | بدعم من Gemini AI")
+    st.warning("⚠️ يرجى إدخال المفتاح في القائمة الجانبية.")
