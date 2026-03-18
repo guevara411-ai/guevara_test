@@ -55,7 +55,7 @@ st.info("ارفع ملفك الدراسي، وسأقوم بتحليله واخت
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     # --- رفع الملف ---
     uploaded_file = st.file_uploader("📂 ارفع ملف (PDF, DOCX, TXT):", type=['pdf', 'docx', 'txt'])
